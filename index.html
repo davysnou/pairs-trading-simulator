@@ -1,0 +1,985 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Correlation vs. Cointegration & Pairs Trading Simulator</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    input[type="range"] { accent-color: #2563eb; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen p-4 md:p-8">
+
+  <div class="max-w-5xl mx-auto">
+    <!-- Top Header & Mode Switcher -->
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+      <div>
+        <h1 class="text-2xl font-bold text-slate-900">Pairs Trading & Spread Simulator</h1>
+        <p class="text-sm text-slate-500">Explore concurrent correlation vs. mean-reverting cointegration</p>
+      </div>
+
+      <div class="flex items-center gap-2 bg-slate-200/80 p-1 rounded-xl self-start">
+        <button id="tabLearner" onclick="switchVersion('learner')"
+          class="px-4 py-2 text-sm font-semibold rounded-lg text-slate-600 hover:text-slate-900 transition">
+          Learner Version
+        </button>
+        <button id="tabPractical" onclick="switchVersion('practical')"
+          class="px-4 py-2 text-sm font-semibold rounded-lg bg-white text-blue-600 shadow-sm transition">
+          Practical Version
+        </button>
+      </div>
+    </div>
+
+    <!-- ==================== LEARNER VERSION ==================== -->
+    <div id="learnerView" class="hidden bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+      <div class="px-6 pt-5 pb-2 flex flex-wrap items-center gap-5 text-xs font-medium text-slate-600">
+        <span class="flex items-center gap-1.5"><span class="w-3 h-0.5 bg-blue-600 inline-block"></span> Asset A</span>
+        <span class="flex items-center gap-1.5"><span class="w-3 h-0.5 bg-amber-500 inline-block"></span> Asset B</span>
+        <span class="flex items-center gap-1.5"><span class="w-3 h-0.5 bg-rose-500 inline-block"></span> Spread (B - A)</span>
+      </div>
+
+      <div class="px-6 py-2">
+        <div class="text-xs font-semibold text-slate-500 mb-1">Price History</div>
+        <div class="h-48 w-full">
+          <canvas id="learnerPriceChart"></canvas>
+        </div>
+      </div>
+
+      <div class="px-6 py-2">
+        <div class="text-xs font-semibold text-slate-500 mb-1">Spread Tracking</div>
+        <div class="h-36 w-full">
+          <canvas id="learnerSpreadChart"></canvas>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-3 border-t border-b border-slate-100 py-4 text-center bg-slate-50/40">
+        <div>
+          <div class="text-xs text-slate-500">Correlation</div>
+          <div id="learnerCorr" class="text-lg font-bold text-slate-900 mt-0.5">+0.00</div>
+        </div>
+        <div>
+          <div class="text-xs text-slate-500">Max Deviation</div>
+          <div id="learnerMaxDev" class="text-lg font-bold text-slate-900 mt-0.5">0.0</div>
+        </div>
+        <div>
+          <div class="text-xs text-slate-500">Avg Spread</div>
+          <div id="learnerAvgSpread" class="text-lg font-bold text-slate-900 mt-0.5">0.0</div>
+        </div>
+      </div>
+
+      <div class="p-6 space-y-5">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div class="flex bg-slate-100 p-1 rounded-full w-full sm:w-auto flex-1 max-w-md">
+            <button id="btnCointegrated" onclick="setLearnerMode('cointegrated')"
+              class="flex-1 py-2 px-4 rounded-full text-sm font-semibold bg-blue-600 text-white transition">
+              Cointegrated
+            </button>
+            <button id="btnConcurrent" onclick="setLearnerMode('concurrent')"
+              class="flex-1 py-2 px-4 rounded-full text-sm font-semibold text-slate-600 hover:text-slate-900 transition">
+              Concurrent Move
+            </button>
+          </div>
+          <button onclick="reseedLearner()"
+            class="px-4 py-2 rounded-full border border-slate-200 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition">
+            ↻ Reseed Path
+          </button>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
+          <div>
+            <div class="flex justify-between text-sm font-medium text-slate-700 mb-1.5">
+              <span>Path Volatility</span>
+              <span id="volVal" class="font-semibold text-slate-900">1.5</span>
+            </div>
+            <input id="volSlider" type="range" min="0.5" max="3.5" step="0.1" value="1.5"
+              oninput="updateLearner()" class="w-full cursor-pointer" />
+          </div>
+          <div>
+            <div class="flex justify-between text-sm font-medium text-slate-700 mb-1.5">
+              <span>Divergence Drift</span>
+              <span id="driftVal" class="font-semibold text-slate-900">0.15</span>
+            </div>
+            <input id="driftSlider" type="range" min="0.00" max="0.40" step="0.01" value="0.15"
+              oninput="updateLearner()" class="w-full cursor-pointer" />
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== PRACTICAL VERSION ==================== -->
+    <div id="practicalView" class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+      <!-- Top Bar: Legend & Live Simulation Controls -->
+      <div class="px-6 pt-5 pb-3 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
+        <div class="flex flex-wrap items-center gap-4 text-xs font-medium text-slate-600">
+          <span class="flex items-center gap-1.5"><span class="w-3 h-0.5 bg-blue-600 inline-block"></span> <span id="legAssetA">Gold</span></span>
+          <span class="flex items-center gap-1.5"><span class="w-3 h-0.5 bg-rose-600 inline-block"></span> <span id="legAssetB">Silver</span></span>
+          <span class="flex items-center gap-1.5"><span class="w-3 h-0.5 bg-emerald-600 inline-block"></span> Spread Z</span>
+          <span class="flex items-center gap-1.5"><span class="w-3 h-0.5 bg-amber-500 inline-block"></span> Rolling Corr</span>
+          <span class="flex items-center gap-1.5"><span class="w-3 h-0.5 bg-purple-600 inline-block"></span> ADF p-value</span>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-2">
+          <!-- Speed Selector -->
+          <div class="flex items-center bg-slate-100 rounded-lg p-0.5 text-xs font-semibold">
+            <button id="speed1x" onclick="setSimSpeed(1)" class="px-2.5 py-1 rounded-md bg-white text-blue-600 shadow-sm transition">1x</button>
+            <button id="speed2x" onclick="setSimSpeed(2)" class="px-2.5 py-1 rounded-md text-slate-600 hover:text-slate-900 transition">2x</button>
+            <button id="speed5x" onclick="setSimSpeed(5)" class="px-2.5 py-1 rounded-md text-slate-600 hover:text-slate-900 transition">5x</button>
+          </div>
+
+          <!-- Start / Stop Simulation Button -->
+          <button id="btnToggleSim" onclick="toggleSimulation()"
+            class="px-3.5 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 transition flex items-center gap-1.5 shadow-sm">
+            ▶ Start Simulation
+          </button>
+
+          <!-- Reset Button -->
+          <button onclick="resetPractical()"
+            class="px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition">
+            ↺ Reset
+          </button>
+        </div>
+      </div>
+
+      <!-- Price Chart -->
+      <div class="px-6 py-2">
+        <div class="flex items-center justify-between text-xs font-semibold text-slate-500 mb-1">
+          <span>Normalized Price History (Base = 100)</span>
+          <span id="dataSourceBadge" class="text-[11px] font-medium text-blue-600 bg-blue-50 px-2 py-0.5 rounded">Synthetic Preset</span>
+        </div>
+        <div class="h-40 w-full">
+          <canvas id="pracPriceChart"></canvas>
+        </div>
+      </div>
+
+      <!-- Spread & Z-Score Backtest Chart -->
+      <div class="px-6 py-2">
+        <div class="flex flex-wrap items-center justify-between text-xs font-semibold text-slate-500 mb-1 gap-2">
+          <span>Spread Z-Score Backtest & Trade Markers (±2σ Entry | ±3.5σ Stop-Loss)</span>
+          <span class="font-normal text-[11px] text-slate-500">▲ Long | ▼ Short | ■ Mean Exit | ✕ Stop-Loss</span>
+        </div>
+        <div class="h-48 w-full">
+          <canvas id="pracSpreadChart"></canvas>
+        </div>
+      </div>
+
+      <!-- Rolling Correlation vs ADF p-value -->
+      <div class="px-6 py-2">
+        <div class="flex items-center justify-between text-xs font-semibold text-slate-500 mb-1">
+          <span>Rolling Correlation vs. ADF p-value</span>
+          <span class="font-normal text-[11px] text-slate-400">p &lt; 0.05 indicates stationary cointegration</span>
+        </div>
+        <div class="h-36 w-full">
+          <canvas id="pracStatChart"></canvas>
+        </div>
+      </div>
+
+      <!-- Backtest KPIs -->
+      <div class="grid grid-cols-2 sm:grid-cols-5 border-t border-b border-slate-100 py-4 text-center bg-slate-50/40 gap-y-3">
+        <div>
+          <div class="text-xs text-slate-500">Net Profit ($10k/leg)</div>
+          <div id="pracProfit" class="text-lg font-bold text-emerald-600 mt-0.5">$0.00</div>
+        </div>
+        <div>
+          <div class="text-xs text-slate-500">Total Fees & Slippage</div>
+          <div id="pracFees" class="text-lg font-bold text-slate-700 mt-0.5">$0.00</div>
+        </div>
+        <div>
+          <div class="text-xs text-slate-500">Strategy Win Rate</div>
+          <div id="pracWinRate" class="text-lg font-bold text-slate-900 mt-0.5">0.0%</div>
+        </div>
+        <div>
+          <div class="text-xs text-slate-500">Completed Trades</div>
+          <div id="pracSignals" class="text-lg font-bold text-slate-900 mt-0.5">0</div>
+        </div>
+        <div class="col-span-2 sm:col-span-1">
+          <div class="text-xs text-slate-500">Stop-Losses (±3.5σ)</div>
+          <div id="pracStopLosses" class="text-lg font-bold text-rose-600 mt-0.5">0</div>
+        </div>
+      </div>
+
+      <!-- Practical Controls & CSV Upload -->
+      <div class="p-6 space-y-6">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-xs font-semibold text-slate-600 mb-1.5">Asset Pair Configuration</label>
+            <select id="pairPreset" onchange="applyPreset()"
+              class="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500">
+              <option value="gold_silver">Gold vs. Silver (High Cointegration)</option>
+              <option value="wti_brent">WTI vs. Brent Crude (Tight Energy Spread)</option>
+              <option value="visa_mc">Visa vs. Mastercard (Co-moving Equities)</option>
+              <option value="btc_eth">Bitcoin vs. Ethereum (High Volatility / Drift)</option>
+              <option value="tech_sp500">AAPL vs. MSFT (Correlated, Weak Mean Reversion)</option>
+            </select>
+          </div>
+
+          <!-- CSV Historical Data Upload -->
+          <div>
+            <div class="flex items-center justify-between mb-1.5">
+              <label class="block text-xs font-semibold text-slate-600">Test Real Historical Data (CSV)</label>
+              <button onclick="downloadSampleCSV()" class="text-[11px] font-semibold text-blue-600 hover:underline">
+                Download Sample CSV
+              </button>
+            </div>
+            <div class="flex items-center gap-2">
+              <input id="csvFileInput" type="file" accept=".csv" onchange="handleCSVUpload(event)"
+                class="block w-full text-xs text-slate-500 file:mr-3 file:py-2 file:px-3.5 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer border border-slate-200 rounded-xl p-1" />
+              <button id="btnClearCSV" onclick="clearCSV()" class="hidden px-3 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50">
+                Clear
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Sliders for Synthetic Mode -->
+        <div id="syntheticSliders" class="grid grid-cols-1 sm:grid-cols-2 gap-6">
+          <div>
+            <div class="flex justify-between text-sm font-medium text-slate-700 mb-1.5">
+              <span>Correlation (Short-term)</span>
+              <span id="pracCorrVal" class="font-semibold text-slate-900">+0.75</span>
+            </div>
+            <input id="pracCorrSlider" type="range" min="0.10" max="0.95" step="0.05" value="0.75"
+              oninput="resetPractical()" class="w-full cursor-pointer" />
+          </div>
+          <div>
+            <div class="flex justify-between text-sm font-medium text-slate-700 mb-1.5">
+              <span>Cointegration Strength</span>
+              <span id="pracCointVal" class="font-semibold text-slate-900">45%</span>
+            </div>
+            <input id="pracCointSlider" type="range" min="0" max="90" step="5" value="45"
+              oninput="resetPractical()" class="w-full cursor-pointer" />
+          </div>
+        </div>
+
+        <!-- Execution Costs, Stop-Loss Toggle & Export Trade Log -->
+        <div class="pt-4 border-t border-slate-100 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div class="flex flex-wrap items-center gap-4">
+            <!-- Stop-Loss Toggle -->
+            <label class="flex items-center gap-2 text-sm font-medium text-slate-700 cursor-pointer">
+              <input id="stopLossToggle" type="checkbox" checked onchange="recomputePractical()"
+                class="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 cursor-pointer" />
+              <span>Enable ±3.5σ Stop-Loss</span>
+            </label>
+
+            <!-- Transaction Cost + Slippage Input (bps) -->
+            <div class="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5">
+              <label for="costBpsInput" class="text-xs font-semibold text-slate-600">Cost + Slippage (bps/leg):</label>
+              <input id="costBpsInput" type="number" min="0" max="200" step="0.5" value="2.5"
+                oninput="recomputePractical()"
+                class="w-16 text-xs font-bold text-slate-900 bg-white border border-slate-200 rounded-lg px-2 py-1 text-right focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+          </div>
+
+          <!-- Export Trade Log Button -->
+          <div class="flex items-center gap-2">
+            <button onclick="exportTradeLogCSV()"
+              class="px-4 py-2 rounded-xl bg-slate-900 text-white text-xs font-semibold hover:bg-slate-800 transition flex items-center gap-1.5 shadow-sm">
+              ↓ Export Trade Log (CSV)
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Footer with Customizable Feedback Link -->
+    <footer class="mt-6 flex flex-col sm:flex-row items-center justify-between text-xs text-slate-500 gap-3 px-1">
+      <span>Educational simulation calibrated to pairs trading dynamics. Not financial advice.</span>
+      <div class="flex items-center gap-3">
+        <a id="feedbackLink" href="https://github.com" target="_blank" rel="noopener noreferrer"
+          class="text-blue-600 font-semibold hover:underline">
+          Share Feedback / Report Issue →
+        </a>
+        <button onclick="editFeedbackUrl()" class="text-slate-400 hover:text-slate-600 underline text-[11px]">
+          Edit Link
+        </button>
+      </div>
+    </footer>
+  </div>
+
+  <script>
+    // ---------- FEEDBACK URL CUSTOMIZATION ----------
+    const savedFeedbackUrl = localStorage.getItem('pairs_sim_feedback_url');
+    if (savedFeedbackUrl) {
+      document.getElementById('feedbackLink').href = savedFeedbackUrl;
+    }
+
+    function editFeedbackUrl() {
+      const current = document.getElementById('feedbackLink').href;
+      const updated = prompt('Enter your Google Form, Tally, or GitHub Issues URL for user feedback:', current);
+      if (updated && updated.trim().startsWith('http')) {
+        document.getElementById('feedbackLink').href = updated.trim();
+        localStorage.setItem('pairs_sim_feedback_url', updated.trim());
+      }
+    }
+
+    // ---------- RANDOM & MATH HELPERS ----------
+    function randNorm() {
+      let u = 0, v = 0;
+      while (u === 0) u = Math.random();
+      while (v === 0) v = Math.random();
+      return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+    }
+
+    function pearsonCorr(x, y) {
+      const n = x.length;
+      if (n < 2) return 0;
+      const meanX = x.reduce((a, b) => a + b, 0) / n;
+      const meanY = y.reduce((a, b) => a + b, 0) / n;
+      let num = 0, denX = 0, denY = 0;
+      for (let i = 0; i < n; i++) {
+        const dx = x[i] - meanX;
+        const dy = y[i] - meanY;
+        num += dx * dy;
+        denX += dx * dx;
+        denY += dy * dy;
+      }
+      return denX && denY ? num / Math.sqrt(denX * denY) : 0;
+    }
+
+    function approxAdfPValue(series) {
+      const n = series.length;
+      if (n < 10) return 0.5;
+      const mean = series.reduce((a, b) => a + b, 0) / n;
+      let num = 0, den = 0;
+      for (let t = 1; t < n; t++) {
+        const yLag = series[t - 1] - mean;
+        const dy = series[t] - series[t - 1];
+        num += yLag * dy;
+        den += yLag * yLag;
+      }
+      const gamma = den > 0 ? num / den : 0;
+      let rss = 0;
+      for (let t = 1; t < n; t++) {
+        const yLag = series[t - 1] - mean;
+        const dy = series[t] - series[t - 1];
+        const err = dy - gamma * yLag;
+        rss += err * err;
+      }
+      const se = Math.sqrt((rss / (n - 2)) / (den || 1));
+      const tStat = se > 0 ? gamma / se : 0;
+      if (tStat < -3.5) return 0.01;
+      if (tStat < -2.88) return 0.01 + ((tStat + 3.5) / 0.62) * 0.04;
+      if (tStat < -1.5) return 0.05 + ((tStat + 2.88) / 1.38) * 0.35;
+      return Math.min(0.95, 0.40 + Math.max(0, (tStat + 1.5) * 0.25));
+    }
+
+    // ---------- VERSION SWITCHER ----------
+    function switchVersion(version) {
+      const isLearner = version === 'learner';
+      if (isLearner && simTimer) stopSimulation();
+      document.getElementById('learnerView').classList.toggle('hidden', !isLearner);
+      document.getElementById('practicalView').classList.toggle('hidden', isLearner);
+
+      document.getElementById('tabLearner').className = isLearner
+        ? 'px-4 py-2 text-sm font-semibold rounded-lg bg-white text-blue-600 shadow-sm transition'
+        : 'px-4 py-2 text-sm font-semibold rounded-lg text-slate-600 hover:text-slate-900 transition';
+
+      document.getElementById('tabPractical').className = !isLearner
+        ? 'px-4 py-2 text-sm font-semibold rounded-lg bg-white text-blue-600 shadow-sm transition'
+        : 'px-4 py-2 text-sm font-semibold rounded-lg text-slate-600 hover:text-slate-900 transition';
+    }
+
+    // ---------- LEARNER VERSION ----------
+    let learnerMode = 'cointegrated';
+    let learnerShocksA = Array.from({ length: 80 }, () => randNorm());
+    let learnerShocksB = Array.from({ length: 80 }, () => randNorm());
+    const labels80 = Array.from({ length: 80 }, (_, i) => i);
+
+    const learnerPriceChart = new Chart(document.getElementById('learnerPriceChart'), {
+      type: 'line',
+      data: {
+        labels: labels80,
+        datasets: [
+          { label: 'Asset A', data: [], borderColor: '#2563eb', borderWidth: 2, pointRadius: 0, tension: 0.2 },
+          { label: 'Asset B', data: [], borderColor: '#f59e0b', borderWidth: 2, pointRadius: 0, tension: 0.2 }
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        plugins: { legend: { display: false } },
+        scales: { x: { display: false }, y: { grid: { color: '#f1f5f9' } } }
+      }
+    });
+
+    const learnerSpreadChart = new Chart(document.getElementById('learnerSpreadChart'), {
+      type: 'line',
+      data: {
+        labels: labels80,
+        datasets: [
+          { label: 'Spread', data: [], borderColor: '#f43f5e', borderWidth: 2, pointRadius: 0, tension: 0.2 },
+          { label: 'Zero', data: Array(80).fill(0), borderColor: '#cbd5e1', borderWidth: 1, borderDash: [4, 4], pointRadius: 0 }
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        plugins: { legend: { display: false } },
+        scales: { x: { grid: { display: false } }, y: { grid: { color: '#f1f5f9' } } }
+      }
+    });
+
+    function setLearnerMode(mode) {
+      learnerMode = mode;
+      const isCoint = mode === 'cointegrated';
+      document.getElementById('btnCointegrated').className = isCoint
+        ? 'flex-1 py-2 px-4 rounded-full text-sm font-semibold bg-blue-600 text-white transition'
+        : 'flex-1 py-2 px-4 rounded-full text-sm font-semibold text-slate-600 hover:text-slate-900 transition';
+      document.getElementById('btnConcurrent').className = !isCoint
+        ? 'flex-1 py-2 px-4 rounded-full text-sm font-semibold bg-blue-600 text-white transition'
+        : 'flex-1 py-2 px-4 rounded-full text-sm font-semibold text-slate-600 hover:text-slate-900 transition';
+      updateLearner();
+    }
+
+    function reseedLearner() {
+      learnerShocksA = Array.from({ length: 80 }, () => randNorm());
+      learnerShocksB = Array.from({ length: 80 }, () => randNorm());
+      updateLearner();
+    }
+
+    function updateLearner() {
+      const vol = parseFloat(document.getElementById('volSlider').value);
+      const drift = parseFloat(document.getElementById('driftSlider').value);
+      document.getElementById('volVal').textContent = vol.toFixed(1);
+      document.getElementById('driftVal').textContent = drift.toFixed(2);
+
+      const priceA = [50], priceB = [50], spread = [0];
+      const retA = [], retB = [];
+
+      for (let t = 1; t < 80; t++) {
+        const common = learnerShocksA[t] * vol;
+        const idio = learnerShocksB[t] * (vol * 0.55);
+
+        let nextA = priceA[t - 1] + common + (learnerMode === 'concurrent' ? drift * 0.8 : 0.05);
+        let nextB;
+
+        if (learnerMode === 'cointegrated') {
+          const prevSpread = priceB[t - 1] - priceA[t - 1];
+          nextB = priceB[t - 1] + common + idio - 0.35 * prevSpread;
+        } else {
+          nextB = priceB[t - 1] + common * 0.85 + idio - drift;
+        }
+
+        nextA = Math.max(10, nextA);
+        nextB = Math.max(10, nextB);
+
+        retA.push(nextA - priceA[t - 1]);
+        retB.push(nextB - priceB[t - 1]);
+        priceA.push(nextA);
+        priceB.push(nextB);
+        spread.push(nextB - nextA);
+      }
+
+      const corr = pearsonCorr(retA, retB);
+      const maxDev = Math.max(...spread.map(s => Math.abs(s)));
+      const avgSpread = spread.reduce((a, b) => a + b, 0) / spread.length;
+
+      document.getElementById('learnerCorr').textContent = (corr >= 0 ? '+' : '') + corr.toFixed(2);
+      document.getElementById('learnerMaxDev').textContent = maxDev.toFixed(1);
+      document.getElementById('learnerAvgSpread').textContent = avgSpread.toFixed(1);
+
+      learnerPriceChart.data.datasets[0].data = priceA;
+      learnerPriceChart.data.datasets[1].data = priceB;
+      learnerPriceChart.update();
+
+      learnerSpreadChart.data.datasets[0].data = spread;
+      learnerSpreadChart.update();
+    }
+
+    // ---------- PRACTICAL VERSION STATE & CHARTS ----------
+    const presets = {
+      gold_silver: { a: 'Gold', b: 'Silver', corr: 0.75, coint: 45 },
+      wti_brent:   { a: 'WTI Crude', b: 'Brent Crude', corr: 0.90, coint: 65 },
+      visa_mc:     { a: 'Visa (V)', b: 'Mastercard (MA)', corr: 0.85, coint: 50 },
+      btc_eth:     { a: 'Bitcoin', b: 'Ethereum', corr: 0.80, coint: 15 },
+      tech_sp500:  { a: 'AAPL', b: 'MSFT', corr: 0.70, coint: 10 }
+    };
+
+    let simTimer = null;
+    let simSpeed = 1;
+    let pracLabels = [];
+    let pracPA = [];
+    let pracPB = [];
+    let csvMode = false;
+    let csvFullData = null;
+    let csvCursor = 0;
+    let tradeLog = [];
+
+    const pracPriceChart = new Chart(document.getElementById('pracPriceChart'), {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: [
+          { label: 'Asset A', data: [], borderColor: '#2563eb', borderWidth: 2, pointRadius: 0, tension: 0.2 },
+          { label: 'Asset B', data: [], borderColor: '#e11d48', borderWidth: 2, pointRadius: 0, tension: 0.2 }
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        plugins: { legend: { display: false } },
+        scales: { x: { display: false }, y: { grid: { color: '#f1f5f9' } } }
+      }
+    });
+
+    const pracSpreadChart = new Chart(document.getElementById('pracSpreadChart'), {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: [
+          { label: 'Z-Score', data: [], borderColor: '#059669', borderWidth: 2, pointRadius: 0, tension: 0.2 },
+          { label: '+3.5σ Stop', data: [], borderColor: '#f43f5e', borderWidth: 1, borderDash: [3, 3], pointRadius: 0 },
+          { label: '+2σ', data: [], borderColor: '#94a3b8', borderWidth: 1, borderDash: [4, 4], pointRadius: 0 },
+          { label: '0', data: [], borderColor: '#cbd5e1', borderWidth: 1, pointRadius: 0 },
+          { label: '-2σ', data: [], borderColor: '#94a3b8', borderWidth: 1, borderDash: [4, 4], pointRadius: 0 },
+          { label: '-3.5σ Stop', data: [], borderColor: '#f43f5e', borderWidth: 1, borderDash: [3, 3], pointRadius: 0 },
+          { label: 'Long Entry', data: [], borderColor: '#2563eb', backgroundColor: '#2563eb', pointStyle: 'triangle', pointRadius: 6, showLine: false },
+          { label: 'Short Entry', data: [], borderColor: '#e11d48', backgroundColor: '#e11d48', pointStyle: 'triangle', rotation: 180, pointRadius: 6, showLine: false },
+          { label: 'Mean Exit', data: [], borderColor: '#0f172a', backgroundColor: '#0f172a', pointStyle: 'rect', pointRadius: 4, showLine: false },
+          { label: 'Stop-Loss Exit', data: [], borderColor: '#dc2626', backgroundColor: '#dc2626', pointStyle: 'crossRot', borderWidth: 2, pointRadius: 6, showLine: false }
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        plugins: { legend: { display: false } },
+        scales: { x: { display: false }, y: { min: -4.5, max: 4.5, grid: { color: '#f1f5f9' } } }
+      }
+    });
+
+    const pracStatChart = new Chart(document.getElementById('pracStatChart'), {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: [
+          { label: 'Rolling Corr', data: [], borderColor: '#f59e0b', borderWidth: 2, pointRadius: 0, tension: 0.2 },
+          { label: 'ADF p-value', data: [], borderColor: '#9333ea', borderWidth: 1.5, borderDash: [3, 3], pointRadius: 0, tension: 0.2 },
+          { label: 'p=0.05', data: [], borderColor: '#cbd5e1', borderWidth: 1, pointRadius: 0 }
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        plugins: { legend: { display: false } },
+        scales: { x: { display: false }, y: { min: -0.2, max: 1.1, grid: { color: '#f1f5f9' } } }
+      }
+    });
+
+    function setSimSpeed(mult) {
+      simSpeed = mult;
+      [1, 2, 5].forEach(s => {
+        document.getElementById('speed' + s + 'x').className = (s === mult)
+          ? 'px-2.5 py-1 rounded-md bg-white text-blue-600 shadow-sm transition'
+          : 'px-2.5 py-1 rounded-md text-slate-600 hover:text-slate-900 transition';
+      });
+      if (simTimer) {
+        stopSimulation();
+        startSimulation();
+      }
+    }
+
+    function toggleSimulation() {
+      if (simTimer) {
+        stopSimulation();
+      } else {
+        startSimulation();
+      }
+    }
+
+    function startSimulation() {
+      const btn = document.getElementById('btnToggleSim');
+      btn.innerHTML = '■ Stop Simulation';
+      btn.className = 'px-3.5 py-1.5 rounded-lg bg-rose-600 text-white text-xs font-semibold hover:bg-rose-700 transition flex items-center gap-1.5 shadow-sm';
+      const intervalMs = Math.round(300 / simSpeed);
+      simTimer = setInterval(stepPracticalSimulation, intervalMs);
+    }
+
+    function stopSimulation() {
+      clearInterval(simTimer);
+      simTimer = null;
+      const btn = document.getElementById('btnToggleSim');
+      btn.innerHTML = '▶ Start Simulation';
+      btn.className = 'px-3.5 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 transition flex items-center gap-1.5 shadow-sm';
+    }
+
+    function generateNextSyntheticTick(prevA, prevB) {
+      const rho = parseFloat(document.getElementById('pracCorrSlider').value);
+      const cointPct = parseFloat(document.getElementById('pracCointSlider').value);
+      const kappa = (cointPct / 100) * 0.45;
+      const idioWeight = Math.sqrt(1 - rho * rho);
+
+      const zCommon = randNorm();
+      const zA = rho * zCommon + idioWeight * randNorm();
+      const zB = rho * zCommon + idioWeight * randNorm();
+
+      const nextA = Math.max(20, prevA * (1 + 0.012 * zA));
+      const prevDiff = prevB - prevA;
+      const nextB = Math.max(20, prevB * (1 + 0.012 * zB) - kappa * prevDiff);
+      return [nextA, nextB];
+    }
+
+    function stepPracticalSimulation() {
+      if (csvMode && csvFullData) {
+        if (csvCursor >= csvFullData.labels.length) {
+          stopSimulation();
+          return;
+        }
+        pracLabels.push(csvFullData.labels[csvCursor]);
+        pracPA.push(csvFullData.pA[csvCursor]);
+        pracPB.push(csvFullData.pB[csvCursor]);
+        csvCursor++;
+      } else {
+        const lastA = pracPA[pracPA.length - 1];
+        const lastB = pracPB[pracPB.length - 1];
+        const [nextA, nextB] = generateNextSyntheticTick(lastA, lastB);
+        pracLabels.push(pracLabels.length);
+        pracPA.push(nextA);
+        pracPB.push(nextB);
+
+        if (pracPA.length > 220) {
+          pracLabels.shift();
+          pracPA.shift();
+          pracPB.shift();
+        }
+      }
+      recomputePractical();
+    }
+
+    function applyPreset() {
+      if (csvMode) clearCSV();
+      const p = presets[document.getElementById('pairPreset').value];
+      document.getElementById('legAssetA').textContent = p.a;
+      document.getElementById('legAssetB').textContent = p.b;
+      document.getElementById('pracCorrSlider').value = p.corr;
+      document.getElementById('pracCointSlider').value = p.coint;
+      resetPractical();
+    }
+
+    function resetPractical() {
+      if (simTimer) stopSimulation();
+      const rho = parseFloat(document.getElementById('pracCorrSlider').value);
+      const cointPct = parseFloat(document.getElementById('pracCointSlider').value);
+      document.getElementById('pracCorrVal').textContent = '+' + rho.toFixed(2);
+      document.getElementById('pracCointVal').textContent = cointPct + '%';
+
+      if (csvMode && csvFullData) {
+        const initialLen = Math.min(40, csvFullData.labels.length);
+        pracLabels = csvFullData.labels.slice(0, initialLen);
+        pracPA = csvFullData.pA.slice(0, initialLen);
+        pracPB = csvFullData.pB.slice(0, initialLen);
+        csvCursor = initialLen;
+      } else {
+        pracLabels = [0];
+        pracPA = [100];
+        pracPB = [100];
+        for (let t = 1; t < 120; t++) {
+          const [nextA, nextB] = generateNextSyntheticTick(pracPA[t - 1], pracPB[t - 1]);
+          pracLabels.push(t);
+          pracPA.push(nextA);
+          pracPB.push(nextB);
+        }
+      }
+      recomputePractical();
+    }
+
+    function recomputePractical() {
+      const n = pracPA.length;
+      const rawSpread = pracPA.map((a, i) => pracPB[i] - a);
+      const retA = [0], retB = [0];
+      for (let t = 1; t < n; t++) {
+        retA.push((pracPA[t] - pracPA[t - 1]) / pracPA[t - 1]);
+        retB.push((pracPB[t] - pracPB[t - 1]) / pracPB[t - 1]);
+      }
+
+      const window = 25;
+      const zScores = [], rollCorr = [], rollAdf = [];
+      const rho = parseFloat(document.getElementById('pracCorrSlider').value);
+      const cointPct = parseFloat(document.getElementById('pracCointSlider').value);
+
+      for (let t = 0; t < n; t++) {
+        if (t < window) {
+          zScores.push(0);
+          rollCorr.push(rho);
+          rollAdf.push(cointPct > 30 ? 0.03 : 0.45);
+        } else {
+          const sliceS = rawSpread.slice(t - window, t);
+          const meanS = sliceS.reduce((a, b) => a + b, 0) / window;
+          const stdS = Math.sqrt(sliceS.reduce((a, b) => a + (b - meanS) ** 2, 0) / window) || 1;
+          zScores.push((rawSpread[t] - meanS) / stdS);
+
+          rollCorr.push(pearsonCorr(retA.slice(t - window, t), retB.slice(t - window, t)));
+          rollAdf.push(approxAdfPValue(rawSpread.slice(Math.max(0, t - 40), t + 1)));
+        }
+      }
+
+      const useStopLoss = document.getElementById('stopLossToggle').checked;
+      const costBps = Math.max(0, parseFloat(document.getElementById('costBpsInput').value) || 0);
+      // $10,000 notional per leg = $20,000 gross per side -> round-trip = $40,000 notional traded
+      // Round-trip cost ($) = 40,000 * (costBps / 10,000) = 4 * costBps
+      const roundTripCostDollars = 4 * costBps;
+
+      const longMarkers = Array(n).fill(null);
+      const shortMarkers = Array(n).fill(null);
+      const exitMarkers = Array(n).fill(null);
+      const stopMarkers = Array(n).fill(null);
+
+      tradeLog = [];
+      let position = 0;
+      let entryIdx = 0;
+      let entrySpread = 0;
+      let entryZ = 0;
+      let totalNetPnL = 0;
+      let totalFees = 0;
+      let wins = 0;
+      let totalTrades = 0;
+      let stopLosses = 0;
+
+      for (let t = window; t < n; t++) {
+        const z = zScores[t];
+        if (position === 0) {
+          if (z <= -2.0 && (!useStopLoss || z > -3.5)) {
+            position = 1;
+            entryIdx = t;
+            entrySpread = rawSpread[t];
+            entryZ = z;
+            longMarkers[t] = z;
+          } else if (z >= 2.0 && (!useStopLoss || z < 3.5)) {
+            position = -1;
+            entryIdx = t;
+            entrySpread = rawSpread[t];
+            entryZ = z;
+            shortMarkers[t] = z;
+          }
+        } else {
+          const hitStopLoss = useStopLoss && ((position === 1 && z <= -3.5) || (position === -1 && z >= 3.5));
+          const hitMeanExit = (position === 1 && z >= 0) || (position === -1 && z <= 0);
+
+          if (hitStopLoss || hitMeanExit) {
+            const grossPnL = position * (rawSpread[t] - entrySpread) * 100;
+            const netPnL = grossPnL - roundTripCostDollars;
+            totalNetPnL += netPnL;
+            totalFees += roundTripCostDollars;
+            if (netPnL > 0) wins++;
+            totalTrades++;
+
+            let exitReason = 'Mean Reversion (Z=0)';
+            if (hitStopLoss) {
+              stopLosses++;
+              stopMarkers[t] = z;
+              exitReason = 'Stop-Loss (±3.5σ)';
+            } else {
+              exitMarkers[t] = z;
+            }
+
+            tradeLog.push({
+              tradeId: totalTrades,
+              direction: position === 1 ? 'LONG SPREAD (Buy B / Sell A)' : 'SHORT SPREAD (Sell B / Buy A)',
+              entryBar: pracLabels[entryIdx],
+              exitBar: pracLabels[t],
+              entryZ: entryZ.toFixed(2),
+              exitZ: z.toFixed(2),
+              entrySpread: entrySpread.toFixed(3),
+              exitSpread: rawSpread[t].toFixed(3),
+              grossPnL: grossPnL.toFixed(2),
+              feesAndSlippage: roundTripCostDollars.toFixed(2),
+              netPnL: netPnL.toFixed(2),
+              exitReason
+            });
+
+            position = 0;
+          }
+        }
+      }
+
+      const profitEl = document.getElementById('pracProfit');
+      profitEl.textContent = (totalNetPnL >= 0 ? '+$' : '-$') + Math.abs(totalNetPnL).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      profitEl.className = totalNetPnL >= 0 ? 'text-lg font-bold text-emerald-600 mt-0.5' : 'text-lg font-bold text-rose-600 mt-0.5';
+
+      document.getElementById('pracFees').textContent = '$' + totalFees.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      document.getElementById('pracWinRate').textContent = totalTrades > 0 ? ((wins / totalTrades) * 100).toFixed(1) + '%' : '0.0%';
+      document.getElementById('pracSignals').textContent = totalTrades;
+      document.getElementById('pracStopLosses').textContent = stopLosses;
+
+      pracPriceChart.data.labels = pracLabels;
+      pracPriceChart.data.datasets[0].data = pracPA;
+      pracPriceChart.data.datasets[1].data = pracPB;
+      pracPriceChart.update();
+
+      pracSpreadChart.data.labels = pracLabels;
+      pracSpreadChart.data.datasets[0].data = zScores;
+      pracSpreadChart.data.datasets[1].data = useStopLoss ? Array(n).fill(3.5) : Array(n).fill(null);
+      pracSpreadChart.data.datasets[2].data = Array(n).fill(2);
+      pracSpreadChart.data.datasets[3].data = Array(n).fill(0);
+      pracSpreadChart.data.datasets[4].data = Array(n).fill(-2);
+      pracSpreadChart.data.datasets[5].data = useStopLoss ? Array(n).fill(-3.5) : Array(n).fill(null);
+      pracSpreadChart.data.datasets[6].data = longMarkers;
+      pracSpreadChart.data.datasets[7].data = shortMarkers;
+      pracSpreadChart.data.datasets[8].data = exitMarkers;
+      pracSpreadChart.data.datasets[9].data = stopMarkers;
+      pracSpreadChart.update();
+
+      pracStatChart.data.labels = pracLabels;
+      pracStatChart.data.datasets[0].data = rollCorr;
+      pracStatChart.data.datasets[1].data = rollAdf;
+      pracStatChart.data.datasets[2].data = Array(n).fill(0.05);
+      pracStatChart.update();
+    }
+
+    // ---------- EXPORT TRADE LOG TO CSV ----------
+    function exportTradeLogCSV() {
+      if (!tradeLog || tradeLog.length === 0) {
+        alert('No completed trades available to export yet. Run or reset the simulation to generate trades.');
+        return;
+      }
+
+      const headers = [
+        'Trade_ID',
+        'Direction',
+        'Entry_Bar_Date',
+        'Exit_Bar_Date',
+        'Entry_ZScore',
+        'Exit_ZScore',
+        'Entry_Spread',
+        'Exit_Spread',
+        'Gross_PnL_USD',
+        'Fees_Slippage_USD',
+        'Net_PnL_USD',
+        'Exit_Reason'
+      ];
+
+      const rows = tradeLog.map(t => [
+        t.tradeId,
+        `"${t.direction}"`,
+        `"${t.entryBar}"`,
+        `"${t.exitBar}"`,
+        t.entryZ,
+        t.exitZ,
+        t.entrySpread,
+        t.exitSpread,
+        t.grossPnL,
+        t.feesAndSlippage,
+        t.netPnL,
+        `"${t.exitReason}"`
+      ].join(','));
+
+      const csvContent = [headers.join(','), ...rows].join('\n');
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'pairs_trading_trade_log.csv';
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    // ---------- CSV UPLOAD & SAMPLE GENERATOR ----------
+    function handleCSVUpload(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        const lines = e.target.result.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+        if (lines.length < 30) {
+          alert('Please upload a CSV with at least 30 rows of price data.');
+          return;
+        }
+
+        const firstCols = lines[0].split(',').map(c => c.trim());
+        const hasDateCol = firstCols.length >= 3 && isNaN(parseFloat(firstCols[1])) && !isNaN(parseFloat(lines[1].split(',')[1]));
+        const startIdx = isNaN(parseFloat(firstCols[firstCols.length - 1])) ? 1 : 0;
+
+        let nameA = 'Asset A', nameB = 'Asset B';
+        if (startIdx === 1) {
+          if (firstCols.length >= 3) {
+            nameA = firstCols[1] || 'Asset A';
+            nameB = firstCols[2] || 'Asset B';
+          } else if (firstCols.length === 2) {
+            nameA = firstCols[0] || 'Asset A';
+            nameB = firstCols[1] || 'Asset B';
+          }
+        }
+
+        const labels = [], rawA = [], rawB = [];
+        for (let i = startIdx; i < lines.length; i++) {
+          const cols = lines[i].split(',').map(c => c.trim());
+          if (cols.length >= 3) {
+            const valA = parseFloat(cols[1]);
+            const valB = parseFloat(cols[2]);
+            if (!isNaN(valA) && !isNaN(valB) && valA > 0 && valB > 0) {
+              labels.push(cols[0]);
+              rawA.push(valA);
+              rawB.push(valB);
+            }
+          } else if (cols.length === 2) {
+            const valA = parseFloat(cols[0]);
+            const valB = parseFloat(cols[1]);
+            if (!isNaN(valA) && !isNaN(valB) && valA > 0 && valB > 0) {
+              labels.push(i - startIdx);
+              rawA.push(valA);
+              rawB.push(valB);
+            }
+          }
+        }
+
+        if (rawA.length < 30) {
+          alert('Could not parse at least 30 valid numeric price pairs from the CSV.');
+          return;
+        }
+
+        const baseA = rawA[0], baseB = rawB[0];
+        const normA = rawA.map(v => (v / baseA) * 100);
+        const normB = rawB.map(v => (v / baseB) * 100);
+
+        csvMode = true;
+        csvFullData = { labels, pA: normA, pB: normB };
+        document.getElementById('legAssetA').textContent = nameA;
+        document.getElementById('legAssetB').textContent = nameB;
+        document.getElementById('dataSourceBadge').textContent = 'Uploaded CSV (' + rawA.length + ' rows)';
+        document.getElementById('syntheticSliders').classList.add('opacity-40', 'pointer-events-none');
+        document.getElementById('btnClearCSV').classList.remove('hidden');
+
+        if (simTimer) stopSimulation();
+        pracLabels = labels;
+        pracPA = normA;
+        pracPB = normB;
+        csvCursor = labels.length;
+        recomputePractical();
+      };
+      reader.readAsText(file);
+    }
+
+    function clearCSV() {
+      csvMode = false;
+      csvFullData = null;
+      document.getElementById('csvFileInput').value = '';
+      document.getElementById('dataSourceBadge').textContent = 'Synthetic Preset';
+      document.getElementById('syntheticSliders').classList.remove('opacity-40', 'pointer-events-none');
+      document.getElementById('btnClearCSV').classList.add('hidden');
+      applyPreset();
+    }
+
+    function downloadSampleCSV() {
+      let rows = ['Date,WTI_Crude,Brent_Crude'];
+      let wti = 72.5, brent = 76.2;
+      const startDate = new Date('2025-01-02');
+      for (let i = 0; i < 150; i++) {
+        const d = new Date(startDate.getTime() + i * 86400000).toISOString().split('T')[0];
+        const common = randNorm() * 0.9;
+        wti = Math.max(40, wti + common + randNorm() * 0.35);
+        const spread = (brent - wti) - 3.7;
+        brent = Math.max(42, brent + common + randNorm() * 0.35 - 0.35 * spread);
+        rows.push(`${d},${wti.toFixed(2)},${brent.toFixed(2)}`);
+      }
+      const blob = new Blob([rows.join('\n')], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'sample_wti_brent_prices.csv';
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    // Initialize both views
+    updateLearner();
+    applyPreset();
+  </script>
+</body>
+</html>
